@@ -1,5 +1,5 @@
 
-# Enabling optional features
+# RAG chat: Enabling optional features
 
 This document covers optional features that can be enabled in the deployed Azure resources.
 You should typically enable these features before running `azd up`. Once you've set them, return to the [deployment steps](../README.md#deploying).
@@ -7,6 +7,10 @@ You should typically enable these features before running `azd up`. Once you've 
 * [Using GPT-4](#using-gpt-4)
 * [Using text-embedding-3 models](#using-text-embedding-3-models)
 * [Enabling GPT-4 Turbo with Vision](#enabling-gpt-4-turbo-with-vision)
+* [Enabling client-side chat history](#enabling-client-side-chat-history)
+* [Enabling persistent chat history with Azure Cosmos DB](#enabling-persistent-chat-history-with-azure-cosmos-db)
+* [Enabling language picker](#enabling-language-picker)
+* [Enabling speech input/output](#enabling-speech-inputoutput)
 * [Enabling Integrated Vectorization](#enabling-integrated-vectorization)
 * [Enabling authentication](#enabling-authentication)
 * [Enabling login and document level access control](#enabling-login-and-document-level-access-control)
@@ -18,35 +22,77 @@ You should typically enable these features before running `azd up`. Once you've 
 
 ## Using GPT-4
 
-We generally find that most developers are able to get high quality answers using GPT 3.5. However, if you want to try GPT-4, you can do so by following these steps:
+(Instructions for **GPT-4**, **GPT-4o**, and **GPT-4o mini** models are also included here.)
+
+We generally find that most developers are able to get high-quality answers using GPT-3.5. However, if you want to try GPT-4, GPT-4o, or GPT-4o mini, you can do so by following these steps:
 
 Execute the following commands inside your terminal:
 
-1. To set the name of the deployment, run this command with a new unique name.
+1. To set the name of the deployment, run this command with a unique name in your Azure OpenAI account. You can use any deployment name, as long as it's unique in your Azure OpenAI account.
+
+    ```bash
+    azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT <your-deployment-name>
+    ```
+
+    For example:
 
     ```bash
     azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT chat4
     ```
 
-1. To set the GPT model name to a **gpt-4** version from the [available models](https://learn.microsoft.com/azure/ai-services/openai/concepts/models), run this command with the appropriate gpt model name.
+1. To set the GPT model name to a **gpt-4**, **gpt-4o**, or **gpt-4o mini** version from the [available models](https://learn.microsoft.com/azure/ai-services/openai/concepts/models), run this command with the appropriate GPT model name.
+
+    For GPT-4:
 
     ```bash
     azd env set AZURE_OPENAI_CHATGPT_MODEL gpt-4
     ```
 
-1. To set the Azure OpenAI deploymemnt capacity, run this command with the desired capacity.
+    For GPT-4o:
+
+    ```bash
+    azd env set AZURE_OPENAI_CHATGPT_MODEL gpt-4o
+    ```
+
+    For GPT-4o mini:
+
+    ```bash
+    azd env set AZURE_OPENAI_CHATGPT_MODEL gpt-4o-mini
+    ```
+
+1. To set the Azure OpenAI deployment SKU name, run this command with [the desired SKU name](https://learn.microsoft.com/azure/ai-services/openai/how-to/deployment-types#deployment-types).
+
+    ```bash
+    azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT_SKU GlobalStandard
+    ```
+
+1. To set the Azure OpenAI deployment capacity, run this command with the desired capacity.
 
     ```bash
     azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT_CAPACITY 10
     ```
 
-1. To set the Azure OpenAI deploymemnt version from the [available versions](https://learn.microsoft.com/azure/ai-services/openai/concepts/models), run this command with the appropriate version.
+1. To set the Azure OpenAI deployment version from the [available versions](https://learn.microsoft.com/azure/ai-services/openai/concepts/models), run this command with the appropriate version.
+
+    For GPT-4:
 
     ```bash
-    azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT_VERSION 0125-Preview
+    azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT_VERSION turbo-2024-04-09
     ```
 
-1. To updat the deployment with the new parameters, run this command.
+    For GPT-4o:
+
+    ```bash
+    azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT_VERSION 2024-05-13
+    ```
+
+    For GPT-4o mini:
+
+    ```bash
+    azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT_VERSION 2024-07-18
+    ```
+
+1. To update the deployment with the new parameters, run this command.
 
     ```bash
     azd up
@@ -58,6 +104,7 @@ Execute the following commands inside your terminal:
 > * `azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT chat` to set the name of your old GPT 3.5 deployment.
 > * `azd env set AZURE_OPENAI_CHATGPT_MODEL gpt-35-turbo` to set the name of your old GPT 3.5 model.
 > * `azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT_CAPACITY 30` to set the capacity of your old GPT 3.5 deployment.
+> * `azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT_SKU Standard` to set the Sku name back to Standard.
 > * `azd env set AZURE_OPENAI_CHATGPT_DEPLOYMENT_VERSION 0613` to set the version number of your old GPT 3.5.
 > * `azd up` to update the provisioned resources.
 >
@@ -104,18 +151,94 @@ If you have already deployed:
 
 This section covers the integration of GPT-4 Vision with Azure AI Search. Learn how to enhance your search capabilities with the power of image and text indexing, enabling advanced search functionalities over diverse document types. For a detailed guide on setup and usage, visit our [Enabling GPT-4 Turbo with Vision](gpt4v.md) page.
 
+## Enabling client-side chat history
+
+This feature allows users to view the chat history of their conversation, stored in the browser using [IndexedDB](https://developer.mozilla.org/docs/Web/API/IndexedDB_API). That means the chat history will be available only on the device where the chat was initiated. To enable browser-stored chat history, run:
+
+```shell
+azd env set USE_CHAT_HISTORY_BROWSER true
+```
+
+## Enabling persistent chat history with Azure Cosmos DB
+
+This feature allows authenticated users to view the chat history of their conversations, stored in the server-side storage using [Azure Cosmos DB](https://learn.microsoft.com/azure/cosmos-db/).This option requires that authentication be enabled. The chat history will be persistent and accessible from any device where the user logs in with the same account. To enable server-stored chat history, run:
+
+```shell
+azd env set USE_CHAT_HISTORY_COSMOS true
+```
+
+When both the browser-stored and Cosmos DB options are enabled, Cosmos DB will take precedence over browser-stored chat history.
+
+## Enabling language picker
+
+You can optionally enable the language picker to allow users to switch between different languages. Currently, it supports English, Spanish, French, and Japanese.
+
+To add support for additional languages, create new locale files and update `app/frontend/src/i18n/config.ts` accordingly. To enable language picker, run:
+
+```shell
+azd env set ENABLE_LANGUAGE_PICKER true
+```
+
+## Enabling speech input/output
+
+[📺 Watch a short video of speech input/output](https://www.youtube.com/watch?v=BwiHUjlLY_U)
+
+You can optionally enable speech input/output by setting the azd environment variables.
+
+### Speech Input
+
+The speech input feature uses the browser's built-in [Speech Recognition API](https://developer.mozilla.org/docs/Web/API/SpeechRecognition). It may not work in all browser/OS combinations. To enable speech input, run:
+
+```shell
+azd env set USE_SPEECH_INPUT_BROWSER true
+```
+
+### Speech Output
+
+The speech output feature uses [Azure Speech Service](https://learn.microsoft.com/azure/ai-services/speech-service/overview) for speech-to-text. Additional costs will be incurred for using the Azure Speech Service. [See pricing](https://azure.microsoft.com/pricing/details/cognitive-services/speech-services/). To enable speech output, run:
+
+```shell
+azd env set USE_SPEECH_OUTPUT_AZURE true
+```
+
+To set [the voice](https://learn.microsoft.com/azure/ai-services/speech-service/language-support?tabs=tts) for the speech output, run:
+
+```shell
+azd env set AZURE_SPEECH_SERVICE_VOICE en-US-AndrewMultilingualNeural
+```
+
+Alternatively you can use the browser's built-in [Speech Synthesis API](https://developer.mozilla.org/docs/Web/API/SpeechSynthesis). It may not work in all browser/OS combinations. To enable speech output, run:
+
+```shell
+azd env set USE_SPEECH_OUTPUT_BROWSER true
+```
+
 ## Enabling Integrated Vectorization
 
-Azure AI search recently introduced an [integrated vectorization feature in preview mode](https://techcommunity.microsoft.com/t5/ai-azure-ai-services-blog/announcing-the-public-preview-of-integrated-vectorization-in/ba-p/3960809#:~:text=Integrated%20vectorization%20is%20a%20new%20feature%20of%20Azure,pull-indexers%2C%20and%20vectorization%20of%20text%20queries%20through%20vectorizers). This feature is a cloud-based approach to data ingestion, which takes care of document format cracking, data extraction, chunking, vectorization, and indexing, all with Azure technologies.
+Azure AI search recently introduced an [integrated vectorization feature in preview mode](https://techcommunity.microsoft.com/blog/azure-ai-services-blog/announcing-the-public-preview-of-integrated-vectorization-in-azure-ai-search/3960809). This feature is a cloud-based approach to data ingestion, which takes care of document format cracking, data extraction, chunking, vectorization, and indexing, all with Azure technologies.
 
 To enable integrated vectorization with this sample:
 
-1. If you've previously deployed, delete the existing search index.
-2. Run `azd env set USE_FEATURE_INT_VECTORIZATION true`
-3. Run `azd up` to update system and user roles
+1. If you've previously deployed, delete the existing search index. 🗑️
+2. To enable the use of integrated vectorization, run:
+
+    ```shell
+    azd env set USE_FEATURE_INT_VECTORIZATION true
+    ```
+
+3. If you've already deployed your app, then you can run just the `provision` step:
+
+    ```shell
+    azd provision
+    ```
+
+    That will set up necessary RBAC roles and configure the integrated vectorization feature on your search service.
+
+    If you haven't deployed your app yet, then you should run the full `azd up` after configuring all optional features.
+
 4. You can view the resources such as the indexer and skillset in Azure Portal and monitor the status of the vectorization process.
 
-This feature is not currently compatible with GPT4-vision or the newer text-embedding-3 models.
+⚠️ This feature is not currently compatible with the [GPT vision integration](./gpt4v.md).
 
 ## Enabling authentication
 
@@ -123,7 +246,7 @@ By default, the deployed Azure web app will have no authentication or access res
 
 Alternatively, you can manually require authentication to your Azure Active Directory by following the [Add app authentication](https://learn.microsoft.com/azure/app-service/scenario-secure-app-authentication-app-service) tutorial and set it up against the deployed web app.
 
-To then limit access to a specific set of users or groups, you can follow the steps from [Restrict your Azure AD app to a set of users](https://learn.microsoft.com/azure/active-directory/develop/howto-restrict-your-app-to-a-set-of-users) by changing "Assignment Required?" option under the Enterprise Application, and then assigning users/groups access.  Users not granted explicit access will receive the error message -AADSTS50105: Your administrator has configured the application <app_name> to block users unless they are specifically granted ('assigned') access to the application.-
+To then limit access to a specific set of users or groups, you can follow the steps from [Restrict your Microsoft Entra app to a set of users](https://learn.microsoft.com/entra/identity-platform/howto-restrict-your-app-to-a-set-of-users) by changing "Assignment Required?" option under the Enterprise Application, and then assigning users/groups access.  Users not granted explicit access will receive the error message -AADSTS50105: Your administrator has configured the application <app_name> to block users unless they are specifically granted ('assigned') access to the application.-
 
 ## Enabling login and document level access control
 
@@ -131,7 +254,7 @@ By default, the deployed Azure web app allows users to chat with all your indexe
 
 ## Enabling user document upload
 
-You can enable an optional user document upload system to allow users to upload their own documents and chat with them. This feature requires you to first [enable login and document level access control](docs/login_and_acl.md). Then you can enable the optional user document upload system by setting an azd environment variable:
+You can enable an optional user document upload system to allow users to upload their own documents and chat with them. This feature requires you to first [enable login and document level access control](./login_and_acl.md). Then you can enable the optional user document upload system by setting an azd environment variable:
 
 `azd env set USE_USER_UPLOAD true`
 
@@ -142,13 +265,13 @@ and will have ACLs associated with that directory. When the ingester runs, it wi
 If you are enabling this feature on an existing index, you should also update your index to have the new `storageUrl` field:
 
 ```shell
-./scripts/manageacl.ps1  -v --acl-action enable_acls
+python ./scripts/manageacl.py  -v --acl-action enable_acls
 ```
 
 And then update existing search documents with the storage URL of the main Blob container:
 
 ```shell
-./scripts/manageacl.ps1  -v --acl-action update_storage_urls --url <https://YOUR-MAIN-STORAGE-ACCOUNT.blob.core.windows.net/content/>
+python ./scripts/manageacl.py  -v --acl-action update_storage_urls --url <https://YOUR-MAIN-STORAGE-ACCOUNT.blob.core.windows.net/content/>
 ```
 
 Going forward, all uploaded documents will have their `storageUrl` set in the search index.
@@ -166,11 +289,11 @@ For the frontend code, change `BACKEND_URI` in `api.ts` to point at the deployed
 For an alternate frontend that's written in Web Components and deployed to Static Web Apps, check out
 [azure-search-openai-javascript](https://github.com/Azure-Samples/azure-search-openai-javascript) and its guide
 on [using a different backend](https://github.com/Azure-Samples/azure-search-openai-javascript#using-a-different-backend).
-Both these repositories adhere to the same [HTTP protocol for RAG chat apps](https://github.com/Azure-Samples/ai-chat-app-protocol).
+Both these repositories adhere to the same [HTTP protocol for AI chat apps](https://aka.ms/chatprotocol).
 
 ## Adding an OpenAI load balancer
 
-As discussed in more details in our [productionizing guide](docs/productionizing.md), you may want to consider implementing a load balancer between OpenAI instances if you are consistently going over the TPM limit.
+As discussed in more details in our [productionizing guide](./productionizing.md), you may want to consider implementing a load balancer between OpenAI instances if you are consistently going over the TPM limit.
 Fortunately, this repository is designed for easy integration with other repositories that create load balancers for OpenAI instances. For seamless integration instructions with this sample, please check:
 
 * [Scale Azure OpenAI for Python with Azure API Management](https://learn.microsoft.com/azure/developer/python/get-started-app-chat-scaling-with-azure-api-management)
@@ -178,7 +301,7 @@ Fortunately, this repository is designed for easy integration with other reposit
 
 ## Deploying with private endpoints
 
-It is possible to deploy this app with public access disabled, using Azure private endpoints and private DNS Zones. For more details, read [the private deployment guide](docs/deploy_private.md). That requires a multi-stage provisioning, so you will need to do more than just `azd up` after setting the environment variables.
+It is possible to deploy this app with public access disabled, using Azure private endpoints and private DNS Zones. For more details, read [the private deployment guide](./deploy_private.md). That requires a multi-stage provisioning, so you will need to do more than just `azd up` after setting the environment variables.
 
 ## Using local parsers
 

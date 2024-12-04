@@ -9,7 +9,6 @@ from typing import (
     List,
     Optional,
     TypedDict,
-    Union,
     cast,
 )
 from urllib.parse import urljoin
@@ -23,6 +22,7 @@ from azure.search.documents.models import (
     VectorQuery,
 )
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 from core.authentication import AuthenticationHelper
 from text import nonewlines
@@ -91,6 +91,11 @@ class ThoughtStep:
 
 
 class Approach(ABC):
+
+    # Allows usage of non-GPT model even if no tokenizer is available for accurate token counting
+    # Useful for using local small language models, for example
+    ALLOW_NON_GPT_MODELS = True
+
     def __init__(
         self,
         search_client: SearchClient,
@@ -118,9 +123,12 @@ class Approach(ABC):
         self.vision_token_provider = vision_token_provider
 
     def build_filter(self, overrides: dict[str, Any], auth_claims: dict[str, Any]) -> Optional[str]:
+        include_category = overrides.get("include_category")
         exclude_category = overrides.get("exclude_category")
         security_filter = self.auth_helper.build_security_filters(overrides, auth_claims)
         filters = []
+        if include_category:
+            filters.append("category eq '{}'".format(include_category.replace("'", "''")))
         if exclude_category:
             filters.append("category ne '{}'".format(exclude_category.replace("'", "''")))
         if security_filter:
@@ -133,27 +141,34 @@ class Approach(ABC):
         query_text: Optional[str],
         filter: Optional[str],
         vectors: List[VectorQuery],
+        use_text_search: bool,
+        use_vector_search: bool,
         use_semantic_ranker: bool,
         use_semantic_captions: bool,
         minimum_search_score: Optional[float],
         minimum_reranker_score: Optional[float],
     ) -> List[Document]:
-        # Use semantic ranker if requested and if retrieval mode is text or hybrid (vectors + text)
-        if use_semantic_ranker and query_text:
+        search_text = query_text if use_text_search else ""
+        search_vectors = vectors if use_vector_search else []
+        if use_semantic_ranker:
             results = await self.search_client.search(
-                search_text=query_text,
+                search_text=search_text,
                 filter=filter,
+                top=top,
+                query_caption="extractive|highlight-false" if use_semantic_captions else None,
+                vector_queries=search_vectors,
                 query_type=QueryType.SEMANTIC,
                 query_language=self.query_language,
                 query_speller=self.query_speller,
                 semantic_configuration_name="default",
-                top=top,
-                query_caption="extractive|highlight-false" if use_semantic_captions else None,
-                vector_queries=vectors,
+                semantic_query=query_text,
             )
         else:
             results = await self.search_client.search(
-                search_text=query_text or "", filter=filter, top=top, vector_queries=vectors
+                search_text=search_text,
+                filter=filter,
+                top=top,
+                vector_queries=search_vectors,
             )
 
         documents = []
@@ -254,6 +269,17 @@ class Approach(ABC):
         return VectorizedQuery(vector=image_query_vector, k_nearest_neighbors=50, fields="imageEmbedding")
 
     async def run(
-        self, messages: list[dict], stream: bool = False, session_state: Any = None, context: dict[str, Any] = {}
-    ) -> Union[dict[str, Any], AsyncGenerator[dict[str, Any], None]]:
+        self,
+        messages: list[ChatCompletionMessageParam],
+        session_state: Any = None,
+        context: dict[str, Any] = {},
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def run_stream(
+        self,
+        messages: list[ChatCompletionMessageParam],
+        session_state: Any = None,
+        context: dict[str, Any] = {},
+    ) -> AsyncGenerator[dict[str, Any], None]:
         raise NotImplementedError

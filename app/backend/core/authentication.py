@@ -1,14 +1,16 @@
 # Refactored from https://github.com/Azure-Samples/ms-identity-python-on-behalf-of
 
+import base64
 import json
 import logging
 from typing import Any, Optional
 
 import aiohttp
+import jwt
 from azure.search.documents.aio import SearchClient
 from azure.search.documents.indexes.models import SearchIndex
-from jose import jwt
-from jose.exceptions import ExpiredSignatureError, JWTClaimsError
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from msal import ConfidentialClientApplication
 from msal.token_cache import TokenCache
 from tenacity import (
@@ -84,7 +86,7 @@ class AuthenticationHelper:
             "msalConfig": {
                 "auth": {
                     "clientId": self.client_app_id,  # Client app id used for login
-                    "authority": self.authority,  # Directory to use for login https://learn.microsoft.com/azure/active-directory/develop/msal-client-application-configuration#authority
+                    "authority": self.authority,  # Directory to use for login https://learn.microsoft.com/entra/identity-platform/msal-client-application-configuration#authority
                     "redirectUri": "/redirect",  # Points to window.location.origin. You must register this URI on Azure Portal/App Registration.
                     "postLogoutRedirectUri": "/",  # Indicates the page to navigate after logout.
                     "navigateToLoginRequestUrl": False,  # If "true", will navigate back to the original request location before processing the auth code response.
@@ -100,10 +102,10 @@ class AuthenticationHelper:
                 # Scopes you add here will be prompted for user consent during sign-in.
                 # By default, MSAL.js will add OIDC scopes (openid, profile, email) to any login request.
                 # For more information about OIDC scopes, visit:
-                # https://docs.microsoft.com/azure/active-directory/develop/v2-permissions-and-consent#openid-connect-scopes
+                # https://learn.microsoft.com/entra/identity-platform/permissions-consent-overview#openid-connect-scopes
                 "scopes": [".default"],
                 # Uncomment the following line to cause a consent dialog to appear on every login
-                # For more information, please visit https://learn.microsoft.com/azure/active-directory/develop/v2-oauth2-auth-code-flow#request-an-authorization-code
+                # For more information, please visit https://learn.microsoft.com/entra/identity-platform/v2-oauth2-auth-code-flow#request-an-authorization-code
                 # "prompt": "consent"
             },
             "tokenRequest": {
@@ -211,7 +213,7 @@ class AuthenticationHelper:
         try:
             # Read the authentication token from the authorization header and exchange it using the On Behalf Of Flow
             # The scope is set to the Microsoft Graph API, which may need to be called for more authorization information
-            # https://learn.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-on-behalf-of-flow
+            # https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow
             auth_token = AuthenticationHelper.get_token_auth_header(headers)
             # Validate the token before use
             await self.validate_access_token(auth_token)
@@ -225,13 +227,13 @@ class AuthenticationHelper:
                 raise AuthError(error=str(graph_resource_access_token), status_code=401)
 
             # Read the claims from the response. The oid and groups claims are used for security filtering
-            # https://learn.microsoft.com/azure/active-directory/develop/id-token-claims-reference
+            # https://learn.microsoft.com/entra/identity-platform/id-token-claims-reference
             id_token_claims = graph_resource_access_token["id_token_claims"]
             auth_claims = {"oid": id_token_claims["oid"], "groups": id_token_claims.get("groups", [])}
 
             # A groups claim may have been omitted either because it was not added in the application manifest for the API application,
             # or a groups overage claim may have been emitted.
-            # https://learn.microsoft.com/azure/active-directory/develop/id-token-claims-reference#groups-overage-claim
+            # https://learn.microsoft.com/entra/identity-platform/id-token-claims-reference#groups-overage-claim
             missing_groups_claim = "groups" not in id_token_claims
             has_group_overage_claim = (
                 missing_groups_claim
@@ -282,6 +284,24 @@ class AuthenticationHelper:
 
         return allowed
 
+    async def create_pem_format(self, jwks, token):
+        unverified_header = jwt.get_unverified_header(token)
+        for key in jwks["keys"]:
+            if key["kid"] == unverified_header["kid"]:
+                # Construct the RSA public key
+                public_numbers = rsa.RSAPublicNumbers(
+                    e=int.from_bytes(base64.urlsafe_b64decode(key["e"] + "=="), byteorder="big"),
+                    n=int.from_bytes(base64.urlsafe_b64decode(key["n"] + "=="), byteorder="big"),
+                )
+                public_key = public_numbers.public_key()
+
+                # Convert to PEM format
+                pem_key = public_key.public_bytes(
+                    encoding=serialization.Encoding.PEM, format=serialization.PublicFormat.SubjectPublicKeyInfo
+                )
+                rsa_key = pem_key
+                return rsa_key
+
     # See https://github.com/Azure-Samples/ms-identity-python-on-behalf-of/blob/939be02b11f1604814532fdacc2c2eccd198b755/FlaskAPI/helpers/authorization.py#L44
     async def validate_access_token(self, token: str):
         """
@@ -304,51 +324,38 @@ class AuthenticationHelper:
                         jwks = await resp.json()
 
         if not jwks or "keys" not in jwks:
-            raise AuthError({"code": "invalid_keys", "description": "Unable to get keys to validate auth token."}, 401)
+            raise AuthError("Unable to get keys to validate auth token.", 401)
 
         rsa_key = None
         issuer = None
         audience = None
         try:
-            unverified_header = jwt.get_unverified_header(token)
-            unverified_claims = jwt.get_unverified_claims(token)
+            unverified_claims = jwt.decode(token, options={"verify_signature": False})
             issuer = unverified_claims.get("iss")
             audience = unverified_claims.get("aud")
-            for key in jwks["keys"]:
-                if key["kid"] == unverified_header["kid"]:
-                    rsa_key = {"kty": key["kty"], "kid": key["kid"], "use": key["use"], "n": key["n"], "e": key["e"]}
-                    break
-        except Exception as exc:
-            raise AuthError(
-                {"code": "invalid_header", "description": "Unable to parse authorization token."}, 401
-            ) from exc
+            rsa_key = await self.create_pem_format(jwks, token)
+        except jwt.PyJWTError as exc:
+            raise AuthError("Unable to parse authorization token.", 401) from exc
         if not rsa_key:
-            raise AuthError({"code": "invalid_header", "description": "Unable to find appropriate key"}, 401)
+            raise AuthError("Unable to find appropriate key", 401)
 
         if issuer not in self.valid_issuers:
-            raise AuthError(
-                {"code": "invalid_header", "description": f"Issuer {issuer} not in {','.join(self.valid_issuers)}"}, 401
-            )
+            raise AuthError(f"Issuer {issuer} not in {','.join(self.valid_issuers)}", 401)
 
         if audience not in self.valid_audiences:
             raise AuthError(
-                {
-                    "code": "invalid_header",
-                    "description": f"Audience {audience} not in {','.join(self.valid_audiences)}",
-                },
+                f"Audience {audience} not in {','.join(self.valid_audiences)}",
                 401,
             )
 
         try:
             jwt.decode(token, rsa_key, algorithms=["RS256"], audience=audience, issuer=issuer)
-        except ExpiredSignatureError as jwt_expired_exc:
-            raise AuthError({"code": "token_expired", "description": "token is expired"}, 401) from jwt_expired_exc
-        except JWTClaimsError as jwt_claims_exc:
+        except jwt.ExpiredSignatureError as jwt_expired_exc:
+            raise AuthError("Token is expired", 401) from jwt_expired_exc
+        except (jwt.InvalidAudienceError, jwt.InvalidIssuerError) as jwt_claims_exc:
             raise AuthError(
-                {"code": "invalid_claims", "description": "incorrect claims," "please check the audience and issuer"},
+                "Incorrect claims: please check the audience and issuer",
                 401,
             ) from jwt_claims_exc
         except Exception as exc:
-            raise AuthError(
-                {"code": "invalid_header", "description": "Unable to parse authorization token."}, 401
-            ) from exc
+            raise AuthError("Unable to parse authorization token.", 401) from exc

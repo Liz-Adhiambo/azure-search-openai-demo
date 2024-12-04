@@ -4,6 +4,7 @@ from typing import IO
 from unittest import mock
 
 import aiohttp
+import azure.cognitiveservices.speech
 import azure.storage.filedatalake
 import azure.storage.filedatalake.aio
 import msal
@@ -29,9 +30,13 @@ from .mocks import (
     MockAsyncPageIterator,
     MockAsyncSearchResultsIterator,
     MockAzureCredential,
+    MockAzureCredentialExpired,
     MockBlobClient,
     MockResponse,
     mock_computervision_response,
+    mock_speak_text_cancelled,
+    mock_speak_text_failed,
+    mock_speak_text_success,
 )
 
 MockSearchIndex = SearchIndex(
@@ -57,6 +62,21 @@ def mock_compute_embeddings_call(monkeypatch):
             raise Exception("Unexpected URL for mock call to ClientSession.post()")
 
     monkeypatch.setattr(aiohttp.ClientSession, "post", mock_post)
+
+
+@pytest.fixture
+def mock_speech_success(monkeypatch):
+    monkeypatch.setattr(azure.cognitiveservices.speech.SpeechSynthesizer, "speak_text_async", mock_speak_text_success)
+
+
+@pytest.fixture
+def mock_speech_cancelled(monkeypatch):
+    monkeypatch.setattr(azure.cognitiveservices.speech.SpeechSynthesizer, "speak_text_async", mock_speak_text_cancelled)
+
+
+@pytest.fixture
+def mock_speech_failed(monkeypatch):
+    monkeypatch.setattr(azure.cognitiveservices.speech.SpeechSynthesizer, "speak_text_async", mock_speak_text_failed)
 
 
 @pytest.fixture
@@ -160,6 +180,9 @@ def mock_openai_chatcompletion(monkeypatch):
                 raise StopAsyncIteration
 
     async def mock_acreate(*args, **kwargs):
+        # The only two possible values for seed:
+        assert kwargs.get("seed") is None or kwargs.get("seed") == 42
+
         messages = kwargs["messages"]
         last_question = messages[-1]["content"]
         if last_question == "Generate search query for: What is the capital of France?":
@@ -277,8 +300,13 @@ def mock_env(monkeypatch, request):
         monkeypatch.setenv("AZURE_STORAGE_CONTAINER", "test-storage-container")
         monkeypatch.setenv("AZURE_STORAGE_RESOURCE_GROUP", "test-storage-rg")
         monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "test-storage-subid")
+        monkeypatch.setenv("ENABLE_LANGUAGE_PICKER", "true")
+        monkeypatch.setenv("USE_SPEECH_INPUT_BROWSER", "true")
+        monkeypatch.setenv("USE_SPEECH_OUTPUT_AZURE", "true")
         monkeypatch.setenv("AZURE_SEARCH_INDEX", "test-search-index")
         monkeypatch.setenv("AZURE_SEARCH_SERVICE", "test-search-service")
+        monkeypatch.setenv("AZURE_SPEECH_SERVICE_ID", "test-id")
+        monkeypatch.setenv("AZURE_SPEECH_SERVICE_LOCATION", "eastus")
         monkeypatch.setenv("AZURE_OPENAI_CHATGPT_MODEL", "gpt-35-turbo")
         monkeypatch.setenv("ALLOWED_ORIGIN", "https://frontend.com")
         for key, value in request.param.items():
@@ -286,7 +314,7 @@ def mock_env(monkeypatch, request):
         if os.getenv("AZURE_USE_AUTHENTICATION") is not None:
             monkeypatch.delenv("AZURE_USE_AUTHENTICATION")
 
-        with mock.patch("app.DefaultAzureCredential") as mock_default_azure_credential:
+        with mock.patch("app.AzureDeveloperCliCredential") as mock_default_azure_credential:
             mock_default_azure_credential.return_value = MockAzureCredential()
             yield
 
@@ -305,6 +333,26 @@ async def client(
 
     async with quart_app.test_app() as test_app:
         test_app.app.config.update({"TESTING": True})
+        mock_openai_chatcompletion(test_app.app.config[app.CONFIG_OPENAI_CLIENT])
+        mock_openai_embedding(test_app.app.config[app.CONFIG_OPENAI_CLIENT])
+        yield test_app.test_client()
+
+
+@pytest_asyncio.fixture()
+async def client_with_expiring_token(
+    monkeypatch,
+    mock_env,
+    mock_openai_chatcompletion,
+    mock_openai_embedding,
+    mock_acs_search,
+    mock_blob_container_client,
+    mock_compute_embeddings_call,
+):
+    quart_app = app.create_app()
+
+    async with quart_app.test_app() as test_app:
+        test_app.app.config.update({"TESTING": True})
+        test_app.app.config.update({"azure_credential": MockAzureCredentialExpired()})
         mock_openai_chatcompletion(test_app.app.config[app.CONFIG_OPENAI_CLIENT])
         mock_openai_embedding(test_app.app.config[app.CONFIG_OPENAI_CLIENT])
         yield test_app.test_client()
@@ -335,7 +383,7 @@ async def auth_client(
     for key, value in request.param.items():
         monkeypatch.setenv(key, value)
 
-    with mock.patch("app.DefaultAzureCredential") as mock_default_azure_credential:
+    with mock.patch("app.AzureDeveloperCliCredential") as mock_default_azure_credential:
         mock_default_azure_credential.return_value = MockAzureCredential()
         quart_app = app.create_app()
 
@@ -371,10 +419,15 @@ async def auth_public_documents_client(
     monkeypatch.setenv("USE_LOCAL_PDF_PARSER", "true")
     monkeypatch.setenv("USE_LOCAL_HTML_PARSER", "true")
     monkeypatch.setenv("AZURE_DOCUMENTINTELLIGENCE_SERVICE", "test-documentintelligence-service")
+    monkeypatch.setenv("USE_CHAT_HISTORY_COSMOS", "true")
+    monkeypatch.setenv("AZURE_COSMOSDB_ACCOUNT", "test-cosmosdb-account")
+    monkeypatch.setenv("AZURE_CHAT_HISTORY_DATABASE", "test-cosmosdb-database")
+    monkeypatch.setenv("AZURE_CHAT_HISTORY_CONTAINER", "test-cosmosdb-container")
+
     for key, value in request.param.items():
         monkeypatch.setenv(key, value)
 
-    with mock.patch("app.DefaultAzureCredential") as mock_default_azure_credential:
+    with mock.patch("app.AzureDeveloperCliCredential") as mock_default_azure_credential:
         mock_default_azure_credential.return_value = MockAzureCredential()
         quart_app = app.create_app()
 
